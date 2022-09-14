@@ -1,21 +1,16 @@
-
-OBJECTS = db_access.o sqlite3.o main.o
-CFLAGS = -Wall
+OBJECTS = db_access.o sqlite3.o view_controller.o
+CFLAGS = -Wall -g
 CC = gcc
 
 
-
-
-
-run: Bank
+all: Bank
 	@ rm Bank.db
 	@ ./Bank
 
 Bank: $(OBJECTS)
 	@ $(CC) $^ -o $@
 
-sqlite3.o main.o : sqlite3.h
-db_access.o main.o : db_access.h 
+db_access.o view_controller.o : db_access.h 
 
 
 .phony: clean

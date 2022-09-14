@@ -2,7 +2,16 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
+#include <time.h>
 #include "db_access.h"
+
+
+#define MAX_NUMBER_OF_CLIENTS  1000
+
+unsigned long id_list[MAX_NUMBER_OF_CLIENTS];
+static char sql_statement[1000];
+static sqlite3 *db_connection;
+const char *db_name = "Bank.db";
 
 /******************************************************************************************************/
 /*************************************** SQLITE3 QUERIES **********************************************/
@@ -17,10 +26,6 @@ const char *create_table = "CREATE TABLE IF NOT EXISTS clients(name VARCHAR[128]
                                                              "balance REAL,"
                                                              "password VARCHAR[5])";
 
-const char *update_password = "UPDATE clients SET password = %s WHERE bankAccountID = %lu";
-
-const char *update_cash = "UPDATE clients SET balance = balance + %lf WHERE bankAccountID = %lu";
-
 const char *create_account = "INSERT INTO clients VALUES(\"%s\"," /* name */
                                                        "\"%s\","  /* address */
                                                        "\"%s\","  /* notionalID */
@@ -28,7 +33,7 @@ const char *create_account = "INSERT INTO clients VALUES(\"%s\"," /* name */
                                                        "%lu,"      /* bankAccountID */
                                                        "\"%s\","  /* guardianName */
                                                        "\"%s\","  /* guardianNationID */
-                                                       "\"%d\","  /* accountStatus */
+                                                       "%d,"  /* accountStatus */
                                                        "%f,"      /* balance */
                                                        "\"%s\")"; /* password */
 
@@ -38,13 +43,12 @@ const char *select_all = "SELECT * FROM clients";
 
 const char *update_status = "UPDATE clients SET accountStatus = %d WHERE bankAccountID = %lu";
 
-const char *drop_table = "DROB TABLE clients";
+const char *update_password = "UPDATE clients SET password = %s WHERE bankAccountID = %lu";
+
+const char *update_cash = "UPDATE clients SET balance = balance + %lf WHERE bankAccountID = %lu";
+
+const char *drop_table = "DROP TABLE IF EXISTS clients";
 /******************************************************************************************************/
-
-static char sql_statement[1000];
-
-
-extern sqlite3 *db_connection;
 
 /* Admin Window. */
 
@@ -56,6 +60,14 @@ static int status_callback(void *status, int argc, char **argv, char **azColName
     return 0;
 }
 
+static int password_callback(void *password, int argc, char **argv, char **azColName)
+{
+    assert(password);
+    /* password is column 7 in the table */
+    sscanf(argv[9], "%s", (char *)password);
+    return 0;
+}
+
 static int balance_callback(void *balance, int argc, char **argv, char **azColName)
 {
     assert(balance);
@@ -64,124 +76,196 @@ static int balance_callback(void *balance, int argc, char **argv, char **azColNa
     return 0;
 }
 
-static int callback(void *NotUsed, int argc, char **argv, char **azColName){
+static int select_all_callback(void *, int argc, char **argv, char **azColName)
+{
     int i;
-    for(i=0; i<argc; i++){
+    for(i=0; i<argc; i++) {
         printf("%d: %s = %s\n",i, azColName[i], argv[i] ? argv[i] : "NULL");
     }
     printf("\n");
     return 0;
 }
 
-static void generate_password(char *pass)
+
+static int validate_id_callback(void *count, int argc, char **argv, char **azColName)
 {
-    *pass = '1';
-    pass++;
-    *pass = '\0';
+    *(int *)count = *(int *)count + 1;
+    return 0;
 }
 
-static void generate_unique_id(unsigned long *id)
+void generate_password(char *pass)
+{
+    int i;
+    for (i = 0; i < 5; i++) {
+        pass[i] = rand()%10 + '0';
+    }
+    pass[i] = '\0';
+}
+
+void generate_unique_id(unsigned long *id)
 {
     static unsigned current  = 0;
-    *id = current++;
+    assert(current < MAX_NUMBER_OF_CLIENTS);
+    *id = id_list[current++];
+}
+
+void id_list_init(void)
+{
+    unsigned long start = 1568969615;
+    for (int i = 0; i < MAX_NUMBER_OF_CLIENTS; i++) {
+        id_list[i] = start++;
+    }
+    srand(time(0));
+    int j = 3;
+    do {
+        for (int i = 0; i < MAX_NUMBER_OF_CLIENTS; i++) {
+            int temp = id_list[i];
+            int rnd = rand()%MAX_NUMBER_OF_CLIENTS;
+            id_list[i] = id_list[rnd];
+            id_list[rnd] = temp;
+        }
+        j--;
+    } while (j > 0); // do it three times
+}
+
+void id_list_print(void)
+{
+    for (int i = 0; i < MAX_NUMBER_OF_CLIENTS; i++) {
+        fprintf(stdout, "%ld\n", id_list[i]);
+    }
 }
 
 void system_init(void)
 {
     char *zErrMsg = NULL;
     int rc;
-    rc = sqlite3_exec(db_connection, create_table, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
+
+    rc = sqlite3_open(db_name, &db_connection);
+    if( rc ){
+        fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db_connection));
+        sqlite3_close(db_connection);
+    }
+
+    rc = sqlite3_exec(db_connection, drop_table, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", drop_table);
+        sqlite3_free(zErrMsg);
+    }
+
+    rc = sqlite3_exec(db_connection, create_table, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", create_table);
         sqlite3_free(zErrMsg);
     }
 }
 
-void create_new_account(void)
+void create_new_account(BankAccount_t *account)
 {
     int rc;
     char *zErrMsg = NULL;
-    BankAccount_t account;
 
-    printf("You are about to create a new account!\n");
-    printf("Enter the following data to create a new account: ");
-    
-    /* name */
-    printf("\nEnter the name of the client: ");
-    scanf("%s", account.name);
-
-    /* address */
-    printf("\nEnter the address of the client: ");
-    scanf("%s", account.address);
-
-    /* notional ID */
-    printf("\nEnter the notional Id of the client: ");
-    scanf("%s", account.nationalID);
-
-    /* age */
-    printf("\nEnter the age of the client: ");
-    scanf("%d", &account.age);
-
-    /* Bank Account ID */
-     generate_unique_id(&account.bankAccountID);
-
-    /* guardian name */
-    if (account.age < 20) {
-        printf("\nEnter the name of the guardian: ");
-        scanf("%s", account.guardianName);
-
-        printf("\nEnter the national ID of the guardian: ");
-        scanf("%s", account.guardianNationalID);
-    } else {
-        account.guardianName[0] = '\0'; 
-        account.guardianNationalID[0] = '\0';
-    }
-    account.accountStatus = Active;
-    printf("\nEnter the start balance of the client: ");
-    scanf("%lf", &account.balance);
-
-    generate_password(account.password);
-    printf("\nThe password of the newly create account is %s\n", account.password);
-
-    sprintf(sql_statement, create_account, account.name,
-                                           account.address,
-                                           account.nationalID,
-                                           account.age,
-                                           account.bankAccountID,
-                                           account.guardianName,
-                                           account.guardianNationalID,
-                                           account.accountStatus,
-                                           account.balance,
-                                           account.password);
-    rc = sqlite3_exec(db_connection, sql_statement, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
+    sprintf(sql_statement, create_account, account->name,
+                                           account->address,
+                                           account->nationalID,
+                                           account->age,
+                                           account->bankAccountID,
+                                           account->guardianName,
+                                           account->guardianNationalID,
+                                           account->accountStatus,
+                                           account->balance,
+                                           account->password);
+    rc = sqlite3_exec(db_connection, sql_statement, select_all_callback, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
     }
 }
 
+int is_valid_accountID(unsigned long accountID)
+{
+    int count = 0;
+    char *zErrMsg = NULL;
+    int rc;
+    sprintf(sql_statement, select_row, accountID);
+    rc = sqlite3_exec(db_connection, sql_statement, validate_id_callback, &count, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+    return count == 1 ? 1 : 0;
+}
+
+void set_password(unsigned long accountID, char *password)
+{
+    char *zErrMsg = NULL;
+    int rc;
+    sprintf(sql_statement, update_password, password, accountID);
+    rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+}
+
+void get_password(unsigned long accountID, char *password)
+{
+    char *zErrMsg = NULL;
+    int rc;
+    sprintf(sql_statement, select_row, accountID);
+    rc = sqlite3_exec(db_connection, sql_statement, password_callback, password, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+
+}
 
 void print_all_clients(void) /* for debugging */
 {
     char *zErrMsg = NULL;
     int rc;
-    rc = sqlite3_exec(db_connection, select_all, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
+    rc = sqlite3_exec(db_connection, select_all, select_all_callback, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", select_all);
         sqlite3_free(zErrMsg);
     }
 }
 
-void make_transaction(unsigned long accountID, double amount)
+void make_transaction(unsigned long from, unsigned long to, double amount)
+{
+    char *zErrMsg = NULL;
+    int rc;
+    sprintf(sql_statement, update_cash, -amount, from);
+    rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+
+    sprintf(sql_statement, update_cash, amount, to);
+    rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+}
+
+void get_cash(unsigned long accountID, double amount)
 {
     char *zErrMsg = NULL;
     int rc;
     sprintf(sql_statement, update_cash, -amount, accountID);
-    rc = sqlite3_exec(db_connection, sql_statement, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ){
+    rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
@@ -194,8 +278,21 @@ void change_account_status(unsigned long accountID, Account_Status_t newStatus)
     int rc;
     //char *stmt = "UPDATE clients SET accountStatus = 1 WHERE bankAccountID = 0";
     sprintf(sql_statement, update_status, newStatus, accountID);
-    rc = sqlite3_exec(db_connection, sql_statement, callback, 0, &zErrMsg);
-    if( rc != SQLITE_OK ) {
+    rc = sqlite3_exec(db_connection, sql_statement, select_all_callback, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        fprintf(stderr, "%s\n", sql_statement);
+        sqlite3_free(zErrMsg);
+    }
+}
+
+void set_status(unsigned long accountID, Account_Status_t status)
+{
+    char *zErrMsg = NULL;
+    int rc;
+    sprintf(sql_statement, update_status, status, accountID);
+    rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
@@ -210,7 +307,7 @@ int get_status(unsigned long accountID)
     int rc;
     sprintf(sql_statement, select_row, accountID);
     rc = sqlite3_exec(db_connection, sql_statement, status_callback, &status, &zErrMsg);
-    if( rc != SQLITE_OK ) {
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
@@ -218,7 +315,7 @@ int get_status(unsigned long accountID)
     return status;
 }
 
-double get_cash(unsigned long accountID)
+double get_balance(unsigned long accountID)
 {
     double cash = 0;
 
@@ -226,7 +323,7 @@ double get_cash(unsigned long accountID)
     int rc;
     sprintf(sql_statement, select_row, accountID);
     rc = sqlite3_exec(db_connection, sql_statement, balance_callback, &cash, &zErrMsg);
-    if( rc != SQLITE_OK ) {
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
@@ -240,7 +337,7 @@ void deposit_in_account(unsigned long accountID, double amount)
     int rc;
     sprintf(sql_statement, update_cash, amount, accountID);
     rc = sqlite3_exec(db_connection, sql_statement, NULL, NULL, &zErrMsg);
-    if( rc != SQLITE_OK ){
+    if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
