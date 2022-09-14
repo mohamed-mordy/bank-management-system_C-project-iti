@@ -38,7 +38,6 @@ void set_password(unsigned long accountID, char *password);
 void get_password(unsigned long accountID, char *password);
 void make_transaction(unsigned long from, unsigned long to, double amount);
 void get_cash(unsigned long accountID, double amount);
-void change_account_status(unsigned long accountID, Account_Status_t newStatus);
 void set_status(unsigned long accountID, Account_Status_t status);
 int get_status(unsigned long accountID);
 double get_balance(unsigned long accountID);

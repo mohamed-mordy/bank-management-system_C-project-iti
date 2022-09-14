@@ -223,7 +223,6 @@ void get_password(unsigned long accountID, char *password)
         fprintf(stderr, "%s\n", sql_statement);
         sqlite3_free(zErrMsg);
     }
-
 }
 
 void print_all_clients(void) /* for debugging */
@@ -265,20 +264,6 @@ void get_cash(unsigned long accountID, double amount)
     int rc;
     sprintf(sql_statement, update_cash, -amount, accountID);
     rc = sqlite3_exec(db_connection, sql_statement, 0, 0, &zErrMsg);
-    if ( rc != SQLITE_OK ) {
-        fprintf(stderr, "SQL error: %s\n", zErrMsg);
-        fprintf(stderr, "%s\n", sql_statement);
-        sqlite3_free(zErrMsg);
-    }
-}
-
-void change_account_status(unsigned long accountID, Account_Status_t newStatus)
-{
-    char *zErrMsg = NULL;
-    int rc;
-    //char *stmt = "UPDATE clients SET accountStatus = 1 WHERE bankAccountID = 0";
-    sprintf(sql_statement, update_status, newStatus, accountID);
-    rc = sqlite3_exec(db_connection, sql_statement, select_all_callback, 0, &zErrMsg);
     if ( rc != SQLITE_OK ) {
         fprintf(stderr, "SQL error: %s\n", zErrMsg);
         fprintf(stderr, "%s\n", sql_statement);
